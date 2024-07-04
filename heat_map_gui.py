@@ -3,9 +3,9 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 import matplotlib.pyplot as plt
-from tkinter import Tk, Label, Entry, Button, filedialog, messagebox, PhotoImage
+from tkinter import Tk, Label, Entry, Button, filedialog, messagebox, PhotoImage, ttk
 from tkcalendar import DateEntry
-from tkinter import ttk
+
 
 def select_file():
     file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx")])
