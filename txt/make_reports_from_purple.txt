@@ -1,0 +1,319 @@
+import json
+from json import JSONDecoder
+import jsonschema
+from scapy.all import *
+from scapy.layers.http import *
+import io
+from scapy.layers.inet import UDP, IP
+
+with open(r'C:\Users\s9292756\Desktop\schema.json', 'r') as f:
+    schema = json.load(f)
+    validator = jsonschema.Draft4Validator(schema)
+
+
+def xor_bytes(data: bytes, key: bytes) -> bytes:
+    n_data = []
+    for i in range(len(data)):
+        n_data.append(data[i] ^ key[i % len(key)])
+    return bytes(n_data)
+
+
+ex_start = datetime(2024, 5, 22, 20, 00, 00)
+ex_end = None
+ex_end = datetime(2024, 5, 23, 10, 00, 00)
+key = b'MEgCQQDQ8zr1m159eoVQoR6J9ooKzJapk6xyj7F/lI5Er4hPYJBbhtE+RnqwFmJg7Tn4GQJtnZa1I3qjmXA/2sVSPHU7AgMBAAE='
+# key = b'WeLoveMaof'
+delta = 35  # in minutes
+mmaps_delta = 120
+file_path = r"C:\Users\s9292756\Desktop\matanpurple.pcap"
+
+with open(file_path, 'rb') as f:
+    pcap_bytes = f.read()
+
+pcap_flow = rdpcap(io.BytesIO(pcap_bytes))
+
+# with open(file_path, 'rb') as f:
+#     file_str = f.read().decode('utf-8')
+
+def print_duplicates(pairs):
+    d={}
+    bad_kws =[]
+    for pair in pairs:
+        if pair[0] not in d:
+            d[pair[0]] = pair[1]
+        else:
+            bad_kws.append(pair[0])
+    if len(bad_kws) >0:
+        pairs.append(["matan", bad_kws])
+    return pairs
+
+
+def find_duplicates(json_string: str):
+    decoder = JSONDecoder(object_pairs_hook=print_duplicates)
+    if json_string.count('rp') > 1:
+        print(json_string)
+    value = decoder.decode(json_string)
+    if 'matan' in value:
+        print(json_string)
+        print(value['matan'])
+
+on_off_counter = 0
+
+decoded_messages = []
+message_counter = 0
+bad_messages_counter = 0
+gps_error_counter = 0
+bad_reports = []
+for p in pcap_flow:
+    if datetime.fromtimestamp(int(p.time)) < ex_start:
+        continue
+    if ex_end is not None:
+        if datetime.fromtimestamp(int(p.time)) > ex_end:
+            continue
+    message_counter += 1
+    try:
+        json_data = json.loads(p[TCP].payload.raw_packet_cache.decode('utf-8'))
+        find_duplicates(p[TCP].payload.raw_packet_cache.decode('utf-8'))
+    except:
+        try:
+            if b'si' in p[TCP].payload.raw_packet_cache:
+                print(p[TCP].payload.raw_packet_cache)
+        except:
+            pass
+        continue
+    try:
+        # print(decoded_data)
+        # decoded_text = str(decoded_data, 'utf-8')
+        # decoded_text = decoded_text.replace("\r\n", "")
+        # json_data = json.loads(decoded_text)
+        try:
+            # validator.validate(json_data, schema)
+            pass
+        except Exception as e:
+            if json_data['Log'].starts_with('24051614'):
+                with open(r'./bad_jsons/' + str(message_counter) + '.json', 'w') as f:
+                    # json_data['lon'] = float(json_data['lon'] )
+                    # json_data['lat'] = float(json_data['lat'])
+                    # json_data['alt'] = float(json_data['lon'])
+                    # json_data['spd'] = float(json_data['spd'])
+                    # json_data['snm'] = int(json_data['snm'])
+                    json.dump(json_data, f)
+        if 'state' in json_data:
+            on_off_counter += 1
+            # print(json_data)
+            continue
+        if json_data['lat'] == 'error' or json_data['lon'] == 'error' or json_data['alt'] == 'error' or json_data[
+            'snm'] == 'error':
+            gps_error_counter += 1
+        json_data['created_at'] = datetime.fromtimestamp(int(p.time))
+        decoded_messages.append(json_data)
+        # print(json_data)
+    except Exception as e:
+        bad_messages_counter += 1
+        print("packet number: " + str(message_counter + 1))
+        print("time: " + str(datetime.fromtimestamp(int(p.time))))
+        print("encoded: ")
+        # print(p[UDP].payload.raw_packet_cache)
+        print("decoded: ")
+        # print(decoded_data)
+        # bad_reports.append(p[UDP].payload.raw_packet_cache)
+        # print("packet number: " + str(message_counter))
+        # print(i)
+        # print(p[IP].src)
+        continue
+
+# for p in pcap_flow:
+#     message_counter += 1
+#     decoded_data = xor_bytes(p[UDP].payload.raw_packet_cache, key)
+#     try:
+#         # print(decoded_data)
+#         decoded_text = str(decoded_data, 'utf-8')
+#         json_data = json.loads(decoded_text)
+#         if json_data['lat'] == 'error' or json_data['lon'] == 'error' or json_data['alt'] == 'error' or json_data[
+#             'snm'] == 'error':
+#             gps_error_counter += 1
+#         json_data['created_at'] = datetime.fromtimestamp(int(p.time))
+#         decoded_messages.append(json_data)
+#         print(json_data)
+#     except Exception as e:
+#         bad_messages_counter += 1
+#         # print(p[UDP].payload.raw_packet_cache)
+#         # print(decoded_data)
+#         # bad_reports.append(p[UDP].payload.raw_packet_cache)
+#         # print("packet number: " + str(message_counter))
+#         # print(i)
+#         # print(p[IP].src)
+#         continue
+
+
+print("number of not json messages: " + str(bad_messages_counter))
+print("number of messages with gps error: " + str(gps_error_counter))
+# print(f"max: {max(l)}")
+
+
+import json
+import pandas
+from datetime import datetime, timedelta
+
+# start_ex_date = datetime.fromtimestamp(int(pcap_flow[0].time))
+if ex_start is not None:
+    start_ex_date = max(ex_start, datetime.fromtimestamp(int(pcap_flow[0].time)))
+else:
+    start_ex_date = datetime.fromtimestamp(int(pcap_flow[0].time))
+if ex_end is not None:
+    stop_ex_date = ex_end
+else:
+    stop_ex_date = datetime.fromtimestamp(int(pcap_flow[-1].time))
+expected_reports = int((stop_ex_date - start_ex_date).total_seconds() / timedelta(minutes=25).total_seconds())
+
+reports_by_imei = {}
+for report in decoded_messages:
+    if not report['ei'] in reports_by_imei:
+        reports_by_imei[report['ei']] = []
+    # try:
+    #     report['created_at'] = datetime.strptime(report['created_at']['$date'].split('.')[0], '%Y-%m-%dT%H:%M:%S')
+    # except:
+    #     continue
+    reports_by_imei[report['ei']].append(report)
+
+# sort all reports by timestamp
+for imei in reports_by_imei:
+    reports_by_imei[imei].sort(key=lambda x: x['created_at'])
+
+total_reports = []
+
+broad_gps_error_counters = {}
+
+for imei in reports_by_imei:
+    broad_gps_error_counter = 0
+    normalized_reports = list(filter(lambda x: x['lat'] != "error", reports_by_imei[imei]))
+    for i in range(len(normalized_reports) - 1):
+        misses = int((normalized_reports[i + 1]['created_at'] - normalized_reports[i]['created_at']) / timedelta(
+                minutes=mmaps_delta))
+        broad_gps_error_counter += misses
+    broad_gps_error_counter += int((reports_by_imei[imei][0]['created_at'] - start_ex_date
+                                  ).total_seconds() / timedelta(minutes=mmaps_delta).total_seconds())
+    broad_gps_error_counter += int((stop_ex_date - reports_by_imei[imei][-1]['created_at']
+                                  ).total_seconds() / timedelta(minutes=mmaps_delta).total_seconds())
+    broad_gps_error_counters[imei] = broad_gps_error_counter
+
+with open(r"C:\Users\s9292756\Desktop\serial-numbers.json", 'r') as f:
+    imei_list = json.load(f)
+imei_dict = {}
+for imei in imei_list:
+    imei_dict[imei['ei']] = imei['serial_number']
+
+reports_by_masad = {}
+
+counter = -9000
+for imei in reports_by_imei:
+    counter += 1
+    if imei not in imei_dict:
+        imei_dict[imei] = counter
+    sum = len(reports_by_imei[imei])
+    no_gps = 0
+    good_reports = 0
+    missing_report = 0
+    mmaps_missing_reports = 0
+    for report in reports_by_imei[imei]:
+        if report['snm'] == "error" or \
+                report['lat'] == "error" or \
+                report['lon'] == "error" or \
+                report['alt'] == "error" or \
+                report['spd'] == "error":
+            no_gps += 1
+        else:
+            good_reports += 1
+    missing_report += int((reports_by_imei[imei][0]['created_at'] - start_ex_date
+                           ).total_seconds() / timedelta(minutes=delta).total_seconds())
+    mmaps_missing_reports += int((reports_by_imei[imei][0]['created_at'] - start_ex_date
+                                  ).total_seconds() / timedelta(minutes=mmaps_delta).total_seconds())
+    missing_report += int((stop_ex_date - reports_by_imei[imei][-1]['created_at']
+                           ).total_seconds() / timedelta(minutes=delta).total_seconds())
+    mmaps_missing_reports += int((stop_ex_date - reports_by_imei[imei][-1]['created_at']
+                                  ).total_seconds() / timedelta(minutes=mmaps_delta).total_seconds())
+    for i in range(sum - 1):
+        if reports_by_imei[imei][i + 1]['created_at'] - reports_by_imei[imei][i]['created_at'] > timedelta(
+                minutes=delta):
+            missing_report += int((reports_by_imei[imei][i + 1]['created_at'] - reports_by_imei[imei][i][
+                'created_at']).total_seconds() / timedelta(minutes=delta).total_seconds())
+        if reports_by_imei[imei][i + 1]['created_at'] - reports_by_imei[imei][i]['created_at'] > timedelta(
+                minutes=mmaps_delta):
+            mmaps_missing_reports += int((reports_by_imei[imei][i + 1]['created_at'] - reports_by_imei[imei][i][
+                'created_at']).total_seconds() / timedelta(minutes=mmaps_delta).total_seconds())
+    total_reports.append({
+        "imei": imei,
+        "imsi": reports_by_imei[imei][0]['si'],
+        "masad": imei_dict[imei],
+        "count_reports": sum,
+        "good_reports": good_reports,
+        "no_gps_reports": no_gps,
+        "missing_reports": missing_report,
+        "mmaps_misses": mmaps_missing_reports,
+        "mmaps_gps_or_misses": broad_gps_error_counters[imei],
+        "last_log": reports_by_imei[imei][-1]['Log'],
+        "delta": delta
+    })
+    reports_by_masad[imei_dict[imei]] = reports_by_imei[imei]
+
+df = pandas.DataFrame.from_dict(total_reports)
+df.to_excel(r'C:\Users\s9292756\Desktop\reports.xlsx', 'summery')
+df2 = pandas.DataFrame(decoded_messages)
+df2.to_excel(r'C:\Users\s9292756\Desktop\report.xlsx', 'reports')
+import os
+
+if not os.path.exists("C:\\Users\\s9292756\\Desktop\\reports"):
+    os.mkdir("C:\\Users\\s9292756\\Desktop\\reports")
+for masad in reports_by_masad:
+    dft = pandas.DataFrame(reports_by_masad[masad])
+    dft.to_excel(f'C:\\Users\\s9292756\\Desktop\\reports\\{masad}.xlsx', 'reports')
+
+batt_summ = []
+last_report = []
+for imei in reports_by_imei:
+    uptime = 0
+    creation = datetime.fromtimestamp(1000)
+    last_report.append(reports_by_imei[imei][-1])
+    for report in reports_by_imei[imei]:
+        if report['uptime'] < uptime or report['uptime'] > uptime + 10000:
+            print("===================================")
+            print('imei: ' + str(imei))
+            print("previous uptime: " + str(uptime))
+            print('new uptime: ' + str(report['uptime']))
+            print('previous datetime ' + str(creation))
+            print('new datetime ' + str(report['created_at']))
+            print("===================================")
+            break
+        uptime = report['uptime']
+        creation = report['created_at']
+    batt_summ.append({"imei": imei, "batt": reports_by_imei[imei][-1]['batt']})
+
+df = pandas.DataFrame.from_dict(batt_summ)
+df.to_excel(r'C:\Users\s9292756\Desktop\reports_batt.xlsx', 'summery')
+df = pandas.DataFrame.from_dict(last_report)
+df.to_excel(r'C:\Users\s9292756\Desktop\last_report.xlsx', 'summery')
+
+# for i in range(len(reports_by_masad["2609"])-1):
+#     print(reports_by_masad["2609"][i+1]['created_at']-reports_by_masad["2609"][i]['created_at'])
+
+
+# hist = {}
+# tmp = start_ex_date + timedelta(minutes=40)
+# while tmp < stop_ex_date:
+#     tmp += timedelta(minutes=5)
+#     hist[tmp] = set()
+# for sample in hist.keys():
+#     for masad in reports_by_masad.keys():
+#         for report in reports_by_masad[masad]:
+#             if report['created_at'] < sample and report['created_at'] > sample - timedelta(minutes=30):
+#                 hist[sample].add(masad)
+# hist_num={}
+# for key in hist.keys():
+#     hist_num[key]=len(hist[key])
+# df = pandas.DataFrame(hist_num, index=[0])
+# df.to_excel(r'C:\Users\s9292756\Desktop\reportsOverTime.xlsx')
+
+
+# d={}
+# for i in list(map(lambda x:x[6:], re.findall("\"ei\":\"\d{15}", s))):
+#     d[i]=True

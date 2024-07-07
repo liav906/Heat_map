@@ -1,0 +1,302 @@
+import json
+import jsonschema
+from scapy.all import *
+from scapy.layers.http import *
+import io
+from scapy.layers.inet import UDP, IP
+
+# with open(r'C:\public\schema.json', 'r') as f:
+#     schema = json.load(f)
+#     validator = jsonschema.Draft4Validator(schema)
+
+
+def xor_bytes(data: bytes, key: bytes) -> bytes:
+    n_data = []
+    for i in range(len(data)):
+        n_data.append(data[i] ^ key[i % len(key)])
+    return bytes(n_data)
+
+
+ex_start = datetime(2024, 4, 27, 17, 00, 00)
+ex_end = None
+#ex_end = datetime(2024, 6, 18,10, 00, 00)
+#key = b''
+key = b'WeLoveMaof'
+delta = 35  # in minutes
+mmaps_delta = 120
+file_path = r"C:\Users\Handasa-Public\Desktop\dt.pcap"
+
+with open(file_path, 'rb') as f:
+    pcap_bytes = f.read()
+
+pcap_flow = rdpcap(io.BytesIO(pcap_bytes))
+print(f"last packet time: {datetime.fromtimestamp(int(pcap_flow[-1].time))}")
+# with open(file_path, 'rb') as f:
+# file_str = f.read().decode('utf-8')
+
+on_off_counter = 0
+
+decoded_messages = []
+message_counter = 0
+bad_messages_counter = 0
+gps_error_counter = 0
+bad_reports = []
+for p in pcap_flow:
+    if datetime.fromtimestamp(int(p.time)) < ex_start:
+        continue
+    if ex_end is not None:
+        if datetime.fromtimestamp(int(p.time)) > ex_end:
+            continue
+    message_counter += 1
+    try:
+        if UDP in p:
+            decoded_data = xor_bytes(p[UDP].payload.raw_packet_cache, key)
+        else:
+            decoded_data = xor_bytes(p.raw_packet_cache[48:], key)
+    except Exception as e:
+        print(p.raw_packet_cache)
+        continue
+    try:
+         # print(decoded_data)
+        decoded_text = str(decoded_data, 'utf-8')
+        decoded_text = decoded_text.replace("\r\n", "")
+        json_data = json.loads(decoded_text)
+        try:
+            # validator.validate(json_data, schema)
+           pass
+        except Exception as e:
+            if json_data['Log'].startswith("240521"):
+                with open(r'./bad_jsons/' + str(message_counter) + '.json', 'w') as f:
+                    # json_data['lon'] = float(json_data['lon'] )
+                    # json_data['lat'] = float(json_data['lat'])
+                    # json_data['alt'] = float(json_data['lon'])
+                    # json_data['spd'] = float(json_data['spd'])
+                    # json_data['snm'] = int(json_data['snm'])
+                    json.dump(json_data, f)
+        if 'state' in json_data:
+            on_off_counter += 1
+            # print(json_data)
+            continue
+        if json_data['lat'] == 'error' or json_data['lon'] == 'error' or json_data['alt'] == 'error' or json_data[
+            'snm'] == 'error':
+            gps_error_counter += 1
+        json_data['created_at'] = datetime.fromtimestamp(int(p.time))
+        decoded_messages.append(json_data)
+        # print(json_data)
+    except Exception as e:
+        bad_messages_counter += 1
+        print(e)
+        print("packet number: " + str(message_counter + 1))
+        print("time: " + str(datetime.fromtimestamp(int(p.time))))
+        print("encoded: ")
+
+        if UDP in p:
+            packet_data = p[UDP].payload.raw_packet_cache
+        else:
+            packet_data = p.raw_packet_cache
+        print(packet_data)
+        print("decoded: ")
+        print(decoded_data)
+        bad_reports.append(packet_data)
+        # print("packet number: " + str(message_counter))
+        # print(i)
+        # print(p[IP].src)
+        continue
+
+# for p in pcap_flow:
+#     message_counter += 1
+#     decoded_data = xor_bytes(p[UDP].payload.raw_packet_cache, key)
+#     try:
+#         # print(decoded_data)
+#         decoded_text = str(decoded_data, 'utf-8')
+#         json_data = json.loads(decoded_text)
+#         if json_data['lat'] == 'error' or json_data['lon'] == 'error' or json_data['alt'] == 'error' or json_data[
+#             'snm'] == 'error':
+#             gps_error_counter += 1
+#         json_data['created_at'] = datetime.fromtimestamp(int(p.time))
+#         decoded_messages.append(json_data)
+#         print(json_data)
+#     except Exception as e:
+#         bad_messages_counter += 1
+#         # print(p[UDP].payload.raw_packet_cache)
+#         # print(decoded_data)
+#         # bad_reports.append(p[UDP].payload.raw_packet_cache)
+#         # print("packet number: " + str(message_counter))
+#         # print(i)
+#         # print(p[IP].src)
+#         continue
+
+
+print("number of not json messages: " + str(bad_messages_counter))
+print("number of messages with gps error: " + str(gps_error_counter))
+# print(f"max: {max(l)}")
+
+
+import json
+import pandas
+from datetime import datetime, timedelta
+
+# start_ex_date = datetime.fromtimestamp(int(pcap_flow[0].time))
+if ex_start is not None:
+    start_ex_date = max(ex_start, datetime.fromtimestamp(int(pcap_flow[0].time)))
+else:
+    start_ex_date = datetime.fromtimestamp(int(pcap_flow[0].time))
+if ex_end is not None:
+    stop_ex_date = ex_end
+else:
+    stop_ex_date = datetime.fromtimestamp(int(pcap_flow[-1].time))
+expected_reports = int((stop_ex_date - start_ex_date).total_seconds() / timedelta(minutes=25).total_seconds())
+
+reports_by_imei = {}
+for report in decoded_messages:
+    if not report['ei'] in reports_by_imei:
+        reports_by_imei[report['ei']] = []
+    # try:
+    #     report['created_at'] = datetime.strptime(report['created_at']['$date'].split('.')[0], '%Y-%m-%dT%H:%M:%S')
+    # except:
+    #     continue
+    reports_by_imei[report['ei']].append(report)
+
+# sort all reports by timestamp
+for imei in reports_by_imei:
+    reports_by_imei[imei].sort(key=lambda x: x['created_at'])
+
+total_reports = []
+
+broad_gps_error_counters = {}
+
+for imei in reports_by_imei:
+    broad_gps_error_counter = 0
+    normalized_reports = list(filter(lambda x: x['lat'] != "error", reports_by_imei[imei]))
+    for i in range(len(normalized_reports) - 1):
+        misses = int((normalized_reports[i + 1]['created_at'] - normalized_reports[i]['created_at']) / timedelta(
+            minutes=mmaps_delta))
+        broad_gps_error_counter += misses
+    broad_gps_error_counter += int((reports_by_imei[imei][0]['created_at'] - start_ex_date
+                                    ).total_seconds() / timedelta(minutes=mmaps_delta).total_seconds())
+    broad_gps_error_counter += int((stop_ex_date - reports_by_imei[imei][-1]['created_at']
+                                    ).total_seconds() / timedelta(minutes=mmaps_delta).total_seconds())
+    broad_gps_error_counters[imei] = broad_gps_error_counter
+
+with open(r"C:\Users\Handasa-Public\Desktop\Personal\Liav\codes\Heat_map\serial-numbers.json", 'r') as f:
+    imei_list = json.load(f)
+imei_dict = {}
+for imei in imei_list:
+    imei_dict[imei['ei']] = imei['serial_number']
+
+reports_by_masad = {}
+
+counter = -9000
+for imei in reports_by_imei:
+    counter += 1
+    if imei not in imei_dict:
+        imei_dict[imei] = counter
+    sum = len(reports_by_imei[imei])
+    no_gps = 0
+    good_reports = 0
+    missing_report = 0
+    mmaps_missing_reports = 0
+    for report in reports_by_imei[imei]:
+        if report['snm'] == "error" or \
+                report['lat'] == "error" or \
+                report['lon'] == "error" or \
+                report['alt'] == "error" or \
+                report['spd'] == "error":
+            no_gps += 1
+        else:
+            good_reports += 1
+    missing_report += int((reports_by_imei[imei][0]['created_at'] - start_ex_date
+                           ).total_seconds() / timedelta(minutes=delta).total_seconds())
+    mmaps_missing_reports += int((reports_by_imei[imei][0]['created_at'] - start_ex_date
+                                  ).total_seconds() / timedelta(minutes=mmaps_delta).total_seconds())
+    missing_report += int((stop_ex_date - reports_by_imei[imei][-1]['created_at']
+                           ).total_seconds() / timedelta(minutes=delta).total_seconds())
+    mmaps_missing_reports += int((stop_ex_date - reports_by_imei[imei][-1]['created_at']
+                                  ).total_seconds() / timedelta(minutes=mmaps_delta).total_seconds())
+    for i in range(sum - 1):
+        if reports_by_imei[imei][i + 1]['created_at'] - reports_by_imei[imei][i]['created_at'] > timedelta(
+                minutes=delta):
+            missing_report += int((reports_by_imei[imei][i + 1]['created_at'] - reports_by_imei[imei][i][
+                'created_at']).total_seconds() / timedelta(minutes=delta).total_seconds())
+        if reports_by_imei[imei][i + 1]['created_at'] - reports_by_imei[imei][i]['created_at'] > timedelta(
+                minutes=mmaps_delta):
+            mmaps_missing_reports += int((reports_by_imei[imei][i + 1]['created_at'] - reports_by_imei[imei][i][
+                'created_at']).total_seconds() / timedelta(minutes=mmaps_delta).total_seconds())
+    total_reports.append({
+        "imei": imei,
+        "imsi": reports_by_imei[imei][0]['si'],
+        "masad": imei_dict[imei],
+        "count_reports": sum,
+        "good_reports": good_reports,
+        "no_gps_reports": no_gps,
+        "missing_reports": missing_report,
+        "mmaps_misses": mmaps_missing_reports,
+        "mmaps_gps_or_misses": broad_gps_error_counters[imei],
+        "last_log": reports_by_imei[imei][-1]['Log'],
+        "delta": delta
+    })
+    reports_by_masad[imei_dict[imei]] = reports_by_imei[imei]
+
+df = pandas.DataFrame.from_dict(total_reports)
+df.to_excel(r'C:\Users\Handasa-Public\Desktop\Personal\Liav\codes\Heat_map\result\reports.xlsx', 'summery')
+df2 = pandas.DataFrame(decoded_messages)
+df2.to_excel(r'C:\Users\Handasa-Public\Desktop\Personal\Liav\codes\Heat_map\result\report.xlsx', 'reports')
+import os
+
+if not os.path.exists("C:\\Users\\Handasa-Public\\Desktop\\reports"):
+    os.mkdir("C:\\Users\\Handasa-Public\\Desktop\\reports")
+for masad in reports_by_masad:
+    dft = pandas.DataFrame(reports_by_masad[masad])
+    dft.to_excel(f'C:\\Users\\Handasa-Public\\Desktop\\reports\\{masad}.xlsx', 'reports')
+
+batt_summ = []
+last_report = []
+for imei in reports_by_imei:
+    uptime = 0
+    creation = datetime.fromtimestamp(1000)
+    imei_last_reports = reports_by_imei[imei][-1]
+    imei_last_reports['masad'] = imei_dict[imei]
+    last_report.append(imei_last_reports)
+    for report in reports_by_imei[imei]:
+        if report['uptime'] < uptime or report['uptime'] > uptime + 10000:
+            print("===================================")
+            print('imei: ' + str(imei))
+            print("previous uptime: " + str(uptime))
+            print('new uptime: ' + str(report['uptime']))
+            print('previous datetime ' + str(creation))
+            print('new datetime ' + str(report['created_at']))
+            print("===================================")
+            break
+        uptime = report['uptime']
+        creation = report['created_at']
+    batt_summ.append({"imei": imei, "batt": reports_by_imei[imei][-1]['batt']})
+
+df = pandas.DataFrame.from_dict(batt_summ)
+df.to_excel(r'C:\Users\Handasa-Public\Desktop\Personal\Liav\codes\Heat_map\results\reports_batt.xlsx', 'summery')
+df = pandas.DataFrame.from_dict(last_report)
+df.to_excel(r'C:\Users\Handasa-Public\Desktop\Personal\Liav\codes\Heat_map\results\last_report.xlsx', 'summery')
+
+# for i in range(len(reports_by_masad["2609"])-1):
+#     print(reports_by_masad["2609"][i+1]['created_at']-reports_by_masad["2609"][i]['created_at'])
+
+
+# hist = {}
+# tmp = start_ex_date + timedelta(minutes=40)
+# while tmp < stop_ex_date:
+#     tmp += timedelta(minutes=5)
+#     hist[tmp] = set()
+# for sample in hist.keys():
+#     for masad in reports_by_masad.keys():
+#         for report in reports_by_masad[masad]:
+#             if report['created_at'] < sample and report['created_at'] > sample - timedelta(minutes=30):
+#                 hist[sample].add(masad)
+# hist_num={}
+# for key in hist.keys():
+#     hist_num[key]=len(hist[key])
+# df = pandas.DataFrame(hist_num, index=[0])
+# df.to_excel(r'C:\public\results\reportsOverTime.xlsx')
+
+
+# d={}
+# for i in list(map(lambda x:x[6:], re.findall("\"ei\":\"\d{15}", s))):
+#     d[i]=True
